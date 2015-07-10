@@ -11,14 +11,22 @@ from btchelpers import *
 
 class Peer:
 	# 0: connecting, 1: working 100: error!
-	def __init__(self, btcmgr, ip):
+	def __init__(self, btcmgr, ip, port = 8333, csock = None):
 		self.btcmgr = btcmgr
 		self._ip = ip
-		self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		self._sock.setblocking(0)
-		self._fsm = 0
+		self._port = port
 		self._tosend = ""
 		self._inbuffer = ""
+
+		if not csock:
+			self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+			self._fsm = 0
+		else:
+			self._sock = csock
+			self._tosend = verpacket(self._ip, self._port, self._sock.getsockname()[0], self._sock.getsockname()[1])
+			self._fsm = 1
+			
+		self._sock.setblocking(0)
 
 	def readsome(self):
 		try:
@@ -27,7 +35,8 @@ class Peer:
 				# Closed
 				self._fsm = 100
 				self._last_err = time.time()
-			self._inbuffer += data
+			else:
+				self._inbuffer += data
 		except socket.error, err:
 			if err.args[0] != errno.EAGAIN and err.args[0] != errno.EWOULDBLOCK:
 				self._fsm = 100
@@ -44,10 +53,10 @@ class Peer:
 
 	def work(self):
 		if self._fsm == 0:
-			err = self._sock.connect_ex((self._ip, 8333))
+			err = self._sock.connect_ex((self._ip, self._port))
 			if err == 0:
 				self._fsm = 1
-				self._tosend += verpacket(self._ip)
+				self._tosend = verpacket(self._ip, self._port, self._sock.getsockname()[0], self._sock.getsockname()[1])
 			elif err != errno.EAGAIN and err != errno.EINPROGRESS and err != errno.EWOULDBLOCK:
 				self._fsm = 100
 				self._last_err = time.time()
@@ -75,6 +84,7 @@ class Peer:
 
 			payload = self._inbuffer[24:24+plen]
 			if magic == BTCMAGIC and btccs(payload) == pcksm:
+				print "Got cmd",cmd
 				if cmd == "verack":
 					pass # Nothing to do!
 				elif cmd == "version":
@@ -115,20 +125,32 @@ for dns in dnslist:
 	peers += [ x[4][0] for x in socket.getaddrinfo(dns, 8333) ]
 
 peers = list(set(peers))
-
 peers = [ Peer(btcmgr, x) for x in peers if "." in x ]
 
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server_socket.bind(('', 8333))
+server_socket.listen(1)
+server_socket.setblocking(0)
+
 while True:
+	# Incoming connections
+	try:
+		client_socket, address = server_socket.accept()
+		peers.append(Peer(btcmgr, address[0], address[1], client_socket))
+	except socket.error, e:
+		pass
+
 	#print "Goto work"
 	for p in peers:
 		p.work()
 
-	rsockets = [ x.getrsock() for x in peers if x.getrsock() is not None ]
-	wsockets = [ x.getwsock() for x in peers if x.getwsock() is not None ]
-	esockets = [ x.getesock() for x in peers if x.getesock() is not None ]
+	rsockets = [ x.getrsock() for x in peers if x.getrsock() is not None ] + [server_socket]
+	wsockets = [ x.getwsock() for x in peers if x.getwsock() is not None ] + [server_socket]
+	esockets = [ x.getesock() for x in peers if x.getesock() is not None ] + [server_socket]
 
 	#print "goto sleep", len(rsockets), len(wsockets)
 
-	select.select(rsockets, wsockets, esockets, 10)
+	select.select(rsockets, wsockets, esockets, 1)
 
 

@@ -42,7 +42,7 @@ def netaddr(ip, port):
 	ret = struct.pack('<Q', 1)
 	ret += struct.pack('<L', 0)  # 16 byte IP
 	ret += struct.pack('<L', 0)
-	ret += struct.pack('<L', 0xFFFF)
+	ret += struct.pack('>L', 0xFFFF)
 	ret += struct.pack('>L', ip)
 	ret += struct.pack('>H', port)
 	return ret
@@ -58,16 +58,18 @@ def pktwrap(cmd, payload):
 def gencmd(st):
 	return st + b'\x00' * (12-len(st))
 
-def verpacket(ip):
+def verpacket(ip, port, localip, localport):
 	ip = struct.unpack("!I", socket.inet_aton(ip))[0]
+	localip = struct.unpack("!I", socket.inet_aton(localip))[0]
 
-	payload = struct.pack('<L', 70001)  # Proto version
+	payload = struct.pack('<L', 70002)  # Proto version
 	payload += struct.pack('<Q', 1)    # Bitfield features
 	payload += struct.pack('<Q', int(time.time()))    # timestamp
-	payload += netaddr(ip, 8333)
-	payload += netaddr(0, 0)
+	payload += netaddr(ip, port)
+	payload += netaddr(localip, localport)
 	payload += struct.pack('<Q', int(random.random()*(2**64)))    # nonce
-	payload += varstr('/btcbot:0.1/')
+	#payload += varstr('/btcbot:0.1/')
+	payload += varstr('/Satoshi:0.9.1/')
 	payload += struct.pack('<L', 0)  # No blocks!
 	payload += b'\x01'   # Do we relay?
 
