@@ -65,8 +65,9 @@ def getAddr(peers):
 	for p in peers:
 		if p._connected and not p._error:
 			n += 1
-			ret += struct.struct.pack('<L', ts)
-			ret += netaddr(p._ip, p._port)
+			ip = struct.unpack("!I", socket.inet_aton(p._ip))[0]
+			ret += struct.pack('<L', ts)
+			ret += netaddr(ip, p._port)
 
 	return pktwrap(gencmd("addr"), varint(n) + ret)
 
