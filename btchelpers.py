@@ -3,6 +3,20 @@ import socket, time, random, struct, hashlib
 
 BTCMAGIC = b'\xf9\xbe\xb4\xd9'
 
+def ip6_to_integer(ip6):
+    ip6 = inet_pton(AF_INET6, ip6)
+    a, b = struct.unpack("!QQ", ip6)
+    return (a << 64) | b
+
+def ip4_to_integer(ip):
+	return struct.unpack("!I", socket.inet_aton(ip))[0]
+
+def iptoint(ip):
+	if "." in ip:
+		return ip4_to_integer(ip)
+	else:
+		return ip6_to_integer(ip)
+
 def varint(num):
 	if num == 0:
 		return b'\x00'
@@ -40,10 +54,16 @@ def btccs(payload):
 
 def netaddr(ip, port):
 	ret = struct.pack('<Q', 1)
-	ret += struct.pack('<L', 0)  # 16 byte IP
-	ret += struct.pack('<L', 0)
-	ret += struct.pack('>L', 0xFFFF)
-	ret += struct.pack('>L', ip)
+	ipv4 = "." in ip:
+	ip = iptoint(p._ip)
+
+	if ipv4:
+		ret += struct.pack('<Q', 0)  # 16 byte IP
+		ret += struct.pack('>L', 0xFFFF)
+		ret += struct.pack('>L', ip)
+	else:
+		ret += struct.pack('<QQ', ip)
+
 	ret += struct.pack('>H', port)
 	return ret
 
@@ -65,16 +85,12 @@ def getAddr(peers):
 	for p in peers:
 		if p._connected and not p._error:
 			n += 1
-			ip = struct.unpack("!I", socket.inet_aton(p._ip))[0]
 			ret += struct.pack('<L', ts)
-			ret += netaddr(ip, p._port)
+			ret += netaddr(p._ip, p._port)
 
 	return pktwrap(gencmd("addr"), varint(n) + ret)
 
 def verpacket(ip, port, localip, localport):
-	ip = struct.unpack("!I", socket.inet_aton(ip))[0]
-	localip = struct.unpack("!I", socket.inet_aton(localip))[0]
-
 	payload = struct.pack('<L', 70002)  # Proto version
 	payload += struct.pack('<Q', 1)    # Bitfield features
 	payload += struct.pack('<Q', int(time.time()))    # timestamp
