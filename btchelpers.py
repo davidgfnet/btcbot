@@ -54,8 +54,8 @@ def btccs(payload):
 
 def netaddr(ip, port):
 	ret = struct.pack('<Q', 1)
-	ipv4 = "." in ip:
-	ip = iptoint(p._ip)
+	ipv4 = "." in ip
+	ip = iptoint(ip)
 
 	if ipv4:
 		ret += struct.pack('<Q', 0)  # 16 byte IP
