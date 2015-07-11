@@ -90,7 +90,7 @@ def getAddr(peers):
 
 	return pktwrap(gencmd("addr"), varint(n) + ret)
 
-def verpacket(ip, port, localip, localport):
+def verpacket(height, ip, port, localip, localport):
 	payload = struct.pack('<L', 70002)  # Proto version
 	payload += struct.pack('<Q', 1)    # Bitfield features
 	payload += struct.pack('<Q', int(time.time()))    # timestamp
@@ -99,10 +99,24 @@ def verpacket(ip, port, localip, localport):
 	payload += struct.pack('<Q', int(random.random()*(2**64)))    # nonce
 	#payload += varstr('/btcbot:0.1/')
 	payload += varstr('/Satoshi:0.9.1/')
-	payload += struct.pack('<L', 0)  # No blocks!
+	payload += struct.pack('<L', height)  # Fake the height
 	payload += b'\x01'   # Do we relay?
 
 	return pktwrap(gencmd("version"), payload)
+
+def parseVersion(payload):
+	ret = {}
+	if len(payload) < 85: return ret
+
+	ret["version"] = struct.unpack("<L", payload[:4])[0]
+	ret["services"] = struct.unpack("<Q", payload[4:12])[0]
+	ret["timestamp"] = struct.unpack("<Q", payload[12:20])[0]
+	ret["nonce"] = struct.unpack("<Q", payload[72:80])[0]
+	useragentsize, payload = parsevarint(payload[80:])
+	if len(payload) < useragentsize + 4: return ret
+	payload = payload[useragentsize:]
+	ret["height"] = struct.unpack("<L", payload[:4])[0]
+	return ret
 
 def genPong(payload):
 	return pktwrap(gencmd("pong"), payload)

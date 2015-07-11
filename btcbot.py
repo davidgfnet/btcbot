@@ -12,6 +12,8 @@ from btchelpers import *
 MAX_RETRIES = 10
 
 class Peer:
+	maxheight = 0
+
 	def __init__(self, btcmgr, ip, port = 8333, csock = None):
 		self.btcmgr = btcmgr
 		self._ip = ip
@@ -29,7 +31,7 @@ class Peer:
 			self._connected = False
 		else:
 			self._sock = csock
-			self._tosend = verpacket(self._ip, self._port, self._sock.getsockname()[0], self._sock.getsockname()[1])
+			self._tosend = verpacket(Peer.maxheight, self._ip, self._port, self._sock.getsockname()[0], self._sock.getsockname()[1])
 			self._connected = True
 			print "Connected to", self._ip
 			
@@ -72,7 +74,7 @@ class Peer:
 				err = self._sock.connect_ex((self._ip, self._port))
 				if err == 0:
 					self._connected = True
-					self._tosend = verpacket(self._ip, self._port, self._sock.getsockname()[0], self._sock.getsockname()[1])
+					self._tosend = verpacket(Peer.maxheight, self._ip, self._port, self._sock.getsockname()[0], self._sock.getsockname()[1])
 				elif err != errno.EAGAIN and err != errno.EINPROGRESS and err != errno.EWOULDBLOCK and err != errno.EALREADY:
 					self.setErr("Error at connecting to %s: %d"%(self._ip, err))
 
@@ -109,6 +111,10 @@ class Peer:
 				if cmd == "verack":
 					pass # Nothing to do!
 				elif cmd == "version":
+					# Parse version to get blockheight
+					vdata = parseVersion(payload)
+					if "height" in vdata:
+						Peer.maxheight = max(Peer.maxheight, vdata["height"])
 					self._tosend += genVerAck()
 				elif cmd == "inv":
 					r = self.btcmgr.parseInv(payload)
