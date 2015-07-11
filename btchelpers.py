@@ -58,6 +58,18 @@ def pktwrap(cmd, payload):
 def gencmd(st):
 	return st + b'\x00' * (12-len(st))
 
+def getAddr(peers):
+	ret = ""
+	ts = int(time.time())
+	n = 0
+	for p in peers:
+		if p._connected and not p._error:
+			n += 1
+			ret += struct.struct.pack('<L', ts)
+			ret += netaddr(p._ip, p._port)
+
+	return pktwrap(gencmd("addr"), varint(n) + ret)
+
 def verpacket(ip, port, localip, localport):
 	ip = struct.unpack("!I", socket.inet_aton(ip))[0]
 	localip = struct.unpack("!I", socket.inet_aton(localip))[0]
@@ -89,6 +101,7 @@ class BTCTX:
 class BTCMgr:
 	def __init__(self):
 		self._txlist = []
+		self.peers = []
 
 	def genGetData(self):
 		ret = ""
