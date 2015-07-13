@@ -63,8 +63,8 @@ class Peer:
 			try:
 				w = self._sock.send(self._tosend)
 				self._tosend = self._tosend[w:]
-			except socket.error, e:
-				if err != errno.EAGAIN and err != errno.EWOULDBLOCK:
+			except socket.error, err:
+				if err.args[0] != errno.EAGAIN and err.args[0] != errno.EWOULDBLOCK:
 					self.setErr("Error at write()")
 				break
 
