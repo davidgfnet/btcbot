@@ -12,7 +12,7 @@ def ip4_to_integer(ip):
 	return struct.unpack("!I", socket.inet_aton(ip))[0]
 
 def iptoint(ip):
-	if "." in ip:
+	if ":" not in ip:
 		return ip4_to_integer(ip)
 	else:
 		return ip6_to_integer(ip)
@@ -54,7 +54,7 @@ def btccs(payload):
 
 def netaddr(ip, port):
 	ret = struct.pack('<Q', 1)
-	ipv4 = "." in ip
+	ipv4 = ":" not in ip
 	ip = iptoint(ip)
 
 	if ipv4:
