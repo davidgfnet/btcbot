@@ -4,9 +4,9 @@ import socket, time, random, struct, hashlib
 BTCMAGIC = b'\xf9\xbe\xb4\xd9'
 
 def ip6_to_integer(ip6):
-    ip6 = inet_pton(AF_INET6, ip6)
-    a, b = struct.unpack("!QQ", ip6)
-    return (a << 64) | b
+	ip6 = socket.inet_pton(socket.AF_INET6, ip6)
+	a, b = struct.unpack(">QQ", ip6)
+	return (a << 64) | b
 
 def ip4_to_integer(ip):
 	return struct.unpack("!I", socket.inet_aton(ip))[0]
@@ -62,7 +62,7 @@ def netaddr(ip, port):
 		ret += struct.pack('>L', 0xFFFF)
 		ret += struct.pack('>L', ip)
 	else:
-		ret += struct.pack('<QQ', ip)
+		ret += struct.pack('<QQ', ip/(2**64), ip%(2**64))
 
 	ret += struct.pack('>H', port)
 	return ret
