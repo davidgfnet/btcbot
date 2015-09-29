@@ -1,7 +1,9 @@
 
-import socket, time, random, struct, hashlib
+import socket, random, struct, hashlib
+from constants import *
+from time import time
 
-BTCMAGIC = b'\xf9\xbe\xb4\xd9'
+def hexrev(s): return "".join(reversed([s[i:i+2] for i in range(0, len(s), 2)]))
 
 def ip6_to_integer(ip6):
 	ip6 = socket.inet_pton(socket.AF_INET6, ip6)
@@ -52,6 +54,9 @@ def varstr(st):
 def btccs(payload):
 	return hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
 
+def dsha256(payload):
+	return hashlib.sha256(hashlib.sha256(payload).digest()).digest()
+
 def netaddr(ip, port):
 	ret = struct.pack('<Q', 1)
 	ipv4 = ":" not in ip
@@ -67,8 +72,8 @@ def netaddr(ip, port):
 	ret += struct.pack('>H', port)
 	return ret
 
-def pktwrap(cmd, payload):
-	ret  = BTCMAGIC  # Magic
+def pktwrap(testnet, cmd, payload):
+	ret  = btcMagic(testnet)  # Magic
 	ret += cmd  # Command
 	ret += struct.pack('<L', len(payload))  # Payload length
 	ret += btccs(payload)
@@ -78,9 +83,9 @@ def pktwrap(cmd, payload):
 def gencmd(st):
 	return st + b'\x00' * (12-len(st))
 
-def getAddr(peers):
+def getAddr(testnet, peers):
 	ret = ""
-	ts = int(time.time())
+	ts = int(time())
 	n = 0
 	for p in peers:
 		if p._connected and not p._error:
@@ -88,12 +93,12 @@ def getAddr(peers):
 			ret += struct.pack('<L', ts)
 			ret += netaddr(p._ip, p._port)
 
-	return pktwrap(gencmd("addr"), varint(n) + ret)
+	return pktwrap(testnet, gencmd("addr"), varint(n) + ret)
 
-def verpacket(height, ip, port, localip, localport):
+def verpacket(testnet, height, ip, port, localip, localport):
 	payload = struct.pack('<L', 70002)  # Proto version
 	payload += struct.pack('<Q', 1)    # Bitfield features
-	payload += struct.pack('<Q', int(time.time()))    # timestamp
+	payload += struct.pack('<Q', int(time()))    # timestamp
 	payload += netaddr(ip, port)
 	payload += netaddr(localip, localport)
 	payload += struct.pack('<Q', int(random.random()*(2**64)))    # nonce
@@ -102,7 +107,7 @@ def verpacket(height, ip, port, localip, localport):
 	payload += struct.pack('<L', height)  # Fake the height
 	payload += b'\x01'   # Do we relay?
 
-	return pktwrap(gencmd("version"), payload)
+	return pktwrap(testnet, gencmd("version"), payload)
 
 def parseVersion(payload):
 	ret = {}
@@ -118,36 +123,67 @@ def parseVersion(payload):
 	ret["height"] = struct.unpack("<L", payload[:4])[0]
 	return ret
 
-def genPong(payload):
-	return pktwrap(gencmd("pong"), payload)
+def genPong(testnet, payload):
+	return pktwrap(testnet, gencmd("pong"), payload)
 
-def genVerAck():
-	return pktwrap(gencmd("verack"), "")
+def genVerAck(testnet):
+	return pktwrap(testnet, gencmd("verack"), "")
 
-class BTCTX:
-	def __init__(self, h):
-		self._h = h
-		self._requested = 0
+class BTCOBJ:
+	def __init__(self):
+		self._received = time()
+		self._data = None
+		self._req = False
+	
+
+class BTCTX(BTCOBJ):
+	def __init__(self):
+		BTCOBJ.__init__(self)
+		self._type = 1
+
+class BTCBLOCK(BTCOBJ):
+	def __init__(self):
+		BTCOBJ.__init__(self)
+		self._type = 2
 
 class BTCMgr:
-	def __init__(self):
-		self._txlist = []
+	MAX_CONNECTED_PEERS = 30
+
+	TXTO = 60*5  # Keep TX in the list for 5 minutes
+	TXBCST = 4   # Number of nodes that will get relayed data
+	TXREQN = 3   # Number of nodes to ask for TX
+
+	MAX_BLOCKS = 8  # Since each block is ~1MB, keep resources down
+	BLBCST = 0
+	BLREQN = 2
+
+	def __init__(self, testnet):
+		self._txlist = {}
+		self._bllist = {}
+		self._tick = 0
+		self._slowtick = 0
 		self.peers = []
+		self.testnet = testnet
 
-	def genGetData(self):
+	def genGetData(self, di):
 		ret = ""
-		for inv in self._txlist:
-			ret += struct.pack('<L', 1)
-			ret += inv._h
+		for h, inv in di.items():
+			inv._req = True
+			ret += struct.pack('<L', inv._type)
+			ret += h
 
-		ret = varint(len(self._txlist)) + ret
-		self._txlist = []
-		return pktwrap(gencmd("getdata"), ret)
+		ret = varint(len(di)) + ret
+		return pktwrap(self.testnet, gencmd("getdata"), ret)
+
+	def cleanUp(self):
+		# Clean old TX
+		self._txlist = { k:v for k,v in self._txlist.items()
+								if v._received + BTCMgr.TXTO > time() }
 
 	def parseInv(self, payload):
 		# Parse and look for TX
 		num, payload = parsevarint(payload)
-		if num*36 != len(payload): return ""
+		if num*36 != len(payload): return
 
 		for i in range(num):
 			inv = payload[i*36: i*36+36]
@@ -155,17 +191,62 @@ class BTCMgr:
 			invhash = inv[4:]
 
 			if invtype == 1:
-				if invhash not in [ x._h for x in self._txlist ]:
-					self._txlist.append(BTCTX(invhash))
-					print "TX", invhash.encode("hex")
+				if invhash not in self._txlist.keys():
+					self._txlist[invhash] = BTCTX()
+					#print "TX", hexrev(invhash.encode("hex"))
 			elif invtype == 2:
-				print "BLOCK", invhash.encode("hex")
+				if invhash not in self._bllist.keys():
+					self._bllist[invhash] = BTCBLOCK()
+					print "BLOCK", hexrev(invhash.encode("hex"))
 
-		if len(self._txlist) > 32:
-			return self.genGetData()
-		return ""
+	def parseTx(self, payload):
+		txh = dsha256(payload)
+		if txh in self._txlist:
+			self._txlist[txh]._data = payload
+		#print "Got TX response", hexrev(txh.encode("hex"))
 
+	def work(self):
+		# Look for empty TX/BL and request them
+		if self._tick + 1 < time():
+			self._tick = time()
 
+			print "Number of TX:", len(self._txlist)
+			print "Number of BL:", len(self._bllist)
+			print "Number of peers:", len(self.peers)
 
+			# Get connected peers
+			cpeers = [ x for x in self.peers if x.isOK() ]
+			random.shuffle(cpeers)
+
+			txobjs = { k:v for k,v in self._txlist.items() if not v._data and not v._req }
+			# Pick TXREQN random peers
+			for p in cpeers[:BTCMgr.TXREQN]:
+				p._tosend += self.genGetData(txobjs)
+
+			blobjs = { k:v for k,v in self._bllist.items() if not v._data and not v._req }
+			for p in cpeers[:BTCMgr.BLREQN]:
+				p._tosend += self.genGetData(blobjs)
+
+			self.cleanUp()
+
+		if self._slowtick + 10 < time():
+			self._slowtick = time()
+
+			# Remove the excess peers
+			if len(self.peers) > BTCMgr.MAX_CONNECTED_PEERS:
+				# Recompute peer goodness
+				t = time()
+				bws = [ (p._breceived + p._bsent) / (t - p._ctime) for p in self.peers ]
+				mbw = max(bws)+0.1
+				for i, p in enumerate(self.peers):
+					p._goodness = bws[i] / mbw
+					
+				candidates = sorted(self.peers, key=lambda x: x._goodness, reverse=True)
+				candidates = candidates[BTCMgr.MAX_CONNECTED_PEERS:]
+
+				# Disconnect these guys, allow 2 minutes of "node testing"
+				for p in candidates:
+					if p._connected and p._ctime + 30 < t:
+						p.close()
 
 
